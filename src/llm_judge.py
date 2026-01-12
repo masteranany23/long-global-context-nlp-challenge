@@ -29,7 +29,7 @@ if not GEMINI_API_KEYS:
 print(f"✓ Loaded {len(GEMINI_API_KEYS)} Gemini API key(s)")
 
 # Use correct Gemini model name for v1beta API
-GEMINI_MODEL = "gemini-2.5-flash"  # or "gemini-1.5-pro" if available
+GEMINI_MODEL = "gemini-2.5-flash"
 
 # Max tokens per request for free-tier (safe margin)
 MAX_TOKENS = 2000
@@ -44,7 +44,12 @@ _current_key_index = 0
 # ============================
 # GOOGLE GEMINI CALL FUNCTION
 # ============================
-Uses thread-safe throttling to prevent rate limit errors.
+
+def call_gemini(prompt: str) -> str:
+    """
+    Call Google Gemini API to generate text.
+    Rotates between multiple API keys to distribute load.
+    Uses thread-safe throttling to prevent rate limit errors.
     Returns the raw text response.
     """
     import requests
@@ -62,11 +67,6 @@ Uses thread-safe throttling to prevent rate limit errors.
         _current_key_index += 1
         
         _last_request_time = time.time()
-    global _current_key_index
-    
-    # Select API key with round-robin rotation
-    api_key = GEMINI_API_KEYS[_current_key_index % len(GEMINI_API_KEYS)]
-    _current_key_index += 1
 
     # Use v1beta API with gemini-2.5-flash model
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={api_key}"
@@ -129,79 +129,61 @@ Instructions:
 
 Answer in JSON format like:
 {
-    "prediction": 1,   # 1=consistent, 0=contradict
-    "rationale": "Short reasoning here."
+  "prediction": "consistent",  # or "contradict"
+  "rationale": "Brief 1-2 sentence explanation."
 }
 """
     return prompt
 
 # ============================
-# MAIN LLM JUDGE FUNCTION
+# PATHWAY UDF FOR JUDGING
 # ============================
 
-@pw.udf
-def llm_judge(claim: str, character: str, evidence_chunks: List[str]) -> dict:
+def judge_claim_with_evidence(
+    story_id: str,
+    claim: str,
+    character: str,
+    evidence_chunks: List[str]
+) -> pw.Json:
     """
-    Pathway UDF: returns prediction + rationale for a single claim.
+    UDF that calls Gemini to judge claim + evidence.
+    Returns JSON with { "prediction", "rationale" }.
     """
-    if not evidence_chunks:
-        # fallback: no evidence, mark contradict by default
-        return {"prediction": 0, "rationale": "No evidence available."}
-
-    # Limit number of evidence chunks to stay under token budget
-    MAX_CHUNKS = 5
-    evidence_chunks = evidence_chunks[:MAX_CHUNKS]
-
-    prompt = build_prompt(claim, character, evidence_chunks)
-
     try:
-        response_text = call_gemini(prompt)
-        # Try to parse JSON response
-        # Sometimes the response might have markdown code blocks
-        if "```json" in response_text:
-            # Extract JSON from markdown code block
-            json_start = response_text.find("```json") + 7
-            json_end = response_text.find("```", json_start)
-            response_text = response_text[json_start:json_end].strip()
-        elif "```" in response_text:
-            # Generic code block
-            json_start = response_text.find("```") + 3
-            json_end = response_text.find("```", json_start)
-            response_text = response_text[json_start:json_end].strip()
-        
-        result = json.loads(response_text)
-        if "prediction" in result and result["prediction"] in [0, 1]:
-            return result
-        else:
-            # fallback parsing
-            pred = 1 if "consistent" in response_text.lower() else 0
-            return {"prediction": pred, "rationale": response_text[:200]}
+        if not evidence_chunks:
+            return pw.Json({
+                "story_id": story_id,
+                "prediction": "0",
+                "rationale": "No evidence found"
+            })
+
+        prompt_text = build_prompt(claim, character, evidence_chunks)
+        response_text = call_gemini(prompt_text)
+
+        # Parse JSON from LLM response
+        try:
+            parsed = json.loads(response_text)
+            prediction_raw = parsed.get("prediction", "unknown").lower()
+            # Map "consistent" -> 1, "contradict" -> 0
+            if "consistent" in prediction_raw:
+                prediction = "1"
+            else:
+                prediction = "0"
+
+            rationale = parsed.get("rationale", "No explanation provided")
+        except json.JSONDecodeError:
+            prediction = "0"
+            rationale = f"Failed to parse LLM response: {response_text[:200]}"
+
+        return pw.Json({
+            "story_id": story_id,
+            "prediction": prediction,
+            "rationale": rationale
+        })
+
     except Exception as e:
-        return {"prediction": 0, "rationale": f"LLM error: {str(e)}"}
-
-# ============================
-# HELPER TO PROCESS TABLE
-# ============================
-
-def judge_claims_table(claims_table: pw.Table) -> pw.Table:
-    """
-    Input Pathway table with columns: story_id, claim, book_name, character, evidence_chunks
-    Output table with: story_id, claim, prediction, rationale
-    """
-    judged_table = claims_table.select(
-        story_id=pw.this.story_id,
-        claim=pw.this.claim,
-        character=pw.this.character,
-        evidence_chunks=pw.this.evidence_chunks,
-        result=llm_judge(pw.this.claim, pw.this.character, pw.this.evidence_chunks)
-    ).with_columns(
-        prediction=pw.this.result["prediction"],
-        rationale=pw.this.result["rationale"]
-    )
-
-    return judged_table.select(
-        story_id=pw.this.story_id,
-        claim=pw.this.claim,
-        prediction=pw.this.prediction,
-        rationale=pw.this.rationale
-    )
+        return pw.Json({
+            "story_id": story_id,
+            "prediction": "0",
+            "rationale": f"LLM error: {str(e)}"
+        })
