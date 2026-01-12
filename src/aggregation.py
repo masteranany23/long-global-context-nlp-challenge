@@ -27,33 +27,13 @@ def aggregate_predictions(predictions: list, rationales: list):
 def aggregate_claims(evidence_predictions_table: pw.Table) -> pw.Table:
     """
     Takes a table with columns:
-      - story_id
-      - claim
+      - original_id
       - prediction
       - rationale
-    Since we have one row per claim already, just ensure story_id is preserved.
+    Since we already have one row per claim, just pass through.
     """
-    # Group by story_id to ensure unique results
-    agg_table = evidence_predictions_table.groupby(pw.this.story_id).reduce(
-        story_id=pw.this.story_id,
-        claim=pw.reducers.any(pw.this.claim),  # take any (should be same)
-        prediction=pw.reducers.any(pw.this.prediction),  # take any non-zero
-        rationale=pw.reducers.sorted_tuple(pw.this.rationale)  # collect all rationales
-    )
-    
-    # Extract first rationale from tuple
-    @pw.udf
-    def get_first_rationale(rationales_tuple: tuple) -> str:
-        if rationales_tuple:
-            return str(rationales_tuple[0])
-        return ""
-    
-    agg_table = agg_table.with_columns(
-        rationale=get_first_rationale(pw.this.rationale)
-    )
-
-    return agg_table.select(
-        story_id=pw.this.story_id,
+    return evidence_predictions_table.select(
+        original_id=pw.this.original_id,
         prediction=pw.this.prediction,
         rationale=pw.this.rationale
     )

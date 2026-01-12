@@ -96,8 +96,9 @@ else:
 def normalize_book_name(name: str) -> str:
     return name.title()
 
+# Store original ID as a regular data column (not as Pathway's internal ID)
 claims_table = test_df.select(
-    story_id=pw.this.id,
+    original_id=pw.this.id,  # Keep the original integer ID as a data column
     book_name=normalize_book_name(pw.this.book_name),
     claim=pw.this.content,
     character=pw.this.char
@@ -133,8 +134,9 @@ print("Aggregated predictions for claims")
 # STEP 7: Prepare final results.csv
 # ============================
 
+# Map original_id back to story_id for output
 final_results = aggregated_table.select(
-    story_id=pw.this.story_id,
+    story_id=pw.this.original_id,
     prediction=pw.this.prediction,
     rationale=pw.this.rationale
 )
