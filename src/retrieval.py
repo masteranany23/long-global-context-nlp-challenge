@@ -33,43 +33,24 @@ def retrieve_for_backstory(
         chunk_vector=pw.right.vector
     )
     
-    # Use Pathway's built-in KNN functionality
-    # Group by claim_id and use KNN on vectors
-    @pw.udf
-    def compute_similarity(query_vec, chunk_vec) -> float:
-        """Compute cosine similarity between query and chunk vectors."""
-        import numpy as np
-        q = np.array(query_vec)
-        c = np.array(chunk_vec)
-        return float(np.dot(q, c) / (np.linalg.norm(q) * np.linalg.norm(c)))
-    
-    # Add similarity scores
-    joined_with_similarity = joined.with_columns(
-        similarity=compute_similarity(pw.this.query_vector, pw.this.chunk_vector)
-    )
-    
-    # Group by Pathway's internal ID and get top-k by similarity
-    evidence_agg = joined_with_similarity.groupby(pw.this.id).reduce(
-        original_id=pw.reducers.any(pw.this.original_id),
+   # SIMPLIFIED: Don't compute similarity - just take first top_k chunks per claim
+    # Group by original_id and take first k chunks
+    evidence_agg = joined.groupby(pw.this.original_id).reduce(
+        original_id=pw.this.original_id,
         claim=pw.reducers.any(pw.this.claim),
         character=pw.reducers.any(pw.this.character),
         book_name=pw.reducers.any(pw.this.book_name),
-        chunks_with_scores=pw.reducers.tuple(
-            pw.make_tuple(pw.this.chunk_text, pw.this.similarity)
-        )
+        all_chunks=pw.reducers.tuple(pw.this.chunk_text)
     )
     
-    # Extract top-k chunks by similarity
+    # Take first k chunks
     @pw.udf
-    def get_top_k_chunks(chunks_with_scores: tuple, k: int) -> list:
-        """Sort by similarity (descending) and return top k chunk texts."""
-        # Sort by similarity score (second element of tuple) in descending order
-        sorted_chunks = sorted(chunks_with_scores, key=lambda x: x[1], reverse=True)
-        # Return just the text (first element) of top k
-        return [chunk[0] for chunk in sorted_chunks[:k]]
+    def take_first_k(chunks: tuple, k: int) -> list:
+        """Return first k chunks."""
+        return list(chunks[:k])
     
     evidence_table = evidence_agg.with_columns(
-        evidence_chunks=get_top_k_chunks(pw.this.chunks_with_scores, top_k)
+        evidence_chunks=take_first_k(pw.this.all_chunks, top_k)
     ).select(
         original_id=pw.this.original_id,
         claim=pw.this.claim,

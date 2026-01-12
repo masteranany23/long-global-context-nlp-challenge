@@ -1,4 +1,6 @@
-# src/predict.py
+# src/predict_retry3.py
+# Third retry pipeline for last remaining failed row - outputs to results_retry3.csv
+
 import os
 import pathway as pw
 from pathlib import Path
@@ -16,20 +18,20 @@ from aggregation import aggregate_claims
 
 DATA_DIR = "./data"
 INDEX_DIR = "./indexes"
-RESULTS_FILE = "results.csv"
+RESULTS_FILE = "results_retry3.csv"  # Output to separate file
 
-OPENAI_KEY = os.environ.get("OPENAI_API_KEY", "")  # optional if needed for embedding
-GEMINI_KEY = "AIzaSyDRJJ2Ho8M1nitZeSj_82G6l5qvRKtL3u0"  # os.environ.get("GEMINI_API_KEY")  # required for llm_judge
+OPENAI_KEY = os.environ.get("OPENAI_API_KEY", "")
+GEMINI_KEY = "AIzaSyDRJJ2Ho8M1nitZeSj_82G6l5qvRKtL3u0"
 
-MAX_EVIDENCE_CHUNKS = 5  # limit per claim for LLM prompt
+MAX_EVIDENCE_CHUNKS = 5
 
 # ============================
 # LOAD TEST DATA
 # ============================
 
-test_file = Path(DATA_DIR) / "test.csv"
+test_file = Path(DATA_DIR) / "test_retry3.csv"  # Use third retry subset
 if not test_file.exists():
-    raise FileNotFoundError(f"{test_file} not found. Make sure test.csv is in ./data/")
+    raise FileNotFoundError(f"{test_file} not found.")
 
 # Define schema without using 'id' as primary key
 class TestSchema(pw.Schema):
@@ -45,15 +47,12 @@ test_df = pw.io.csv.read(
     mode="static"
 )
 
-
 # ============================
 # STEP 1: Chunk novels
 # ============================
 
-
 novel_dir = "./data/novels"
 
-# Load all novels (each file becomes a row)
 novels_table = pw.io.fs.read(
     path=novel_dir,
     format="plaintext_by_file",
@@ -61,36 +60,29 @@ novels_table = pw.io.fs.read(
     mode="static"
 )
 
-# UDF to extract book_name from metadata
 @pw.udf
 def extract_book_name(metadata: pw.Json) -> str:
-    # metadata is a Pathway Json object, need to convert to dict
     meta_dict = metadata.as_dict()
     file_path = meta_dict.get("path", meta_dict.get("file_path", ""))
-    # Normalize to title case for consistent matching
     return Path(file_path).stem.title()
 
-# Normalize columns for chunking
 novels_table = novels_table.with_columns(
     book_name=extract_book_name(pw.this._metadata),
     full_text=pw.this.data
 )
 
-# Create chunks
 children_table = build_chunks(novels_table)
 
 # ============================
 # STEP 2: Build / Load Index
 # ============================
 
-# Build or load index per book
 if not os.path.exists(INDEX_DIR) or not os.listdir(INDEX_DIR):
     print("Building indexes...")
     indexes = build_index(children_table, openai_key=OPENAI_KEY, index_dir=INDEX_DIR)
 else:
     print("Loading existing embedder and rebuilding index...")
     loaded = load_indexes(INDEX_DIR)
-    # Still need to rebuild the table with the loaded embedder
     embedder = loaded["embedder"]
     embedded_table = children_table.with_columns(
         vector=embedder(pw.this.text)
@@ -98,25 +90,22 @@ else:
     indexes = {"embedder": embedder, "table": embedded_table}
 
 # ============================
-# STEP 3: Prepare claims from test.csv
+# STEP 3: Prepare claims
 # ============================
 
-# Test CSV should have: id, book_name, char, caption, content
-# Normalize book_name for case-insensitive matching
 @pw.udf
 def normalize_book_name(name: str) -> str:
     return name.title()
 
-# Use the 'id' column directly as original_id (it's already an integer)
 claims_table = test_df.select(
-    original_id=pw.this.id,  # Use the integer id column from CSV
+    original_id=pw.this.id,
     book_name=normalize_book_name(pw.this.book_name),
     claim=pw.this.content,
     character=pw.this.char
 )
 
 # ============================
-# STEP 4: Retrieve evidence chunks for each claim
+# STEP 4: Retrieve evidence
 # ============================
 
 evidence_table = retrieve_for_backstory(
@@ -128,74 +117,68 @@ evidence_table = retrieve_for_backstory(
 print("Retrieved evidence for claims")
 
 # ============================
-# STEP 5: LLM Judge per claim + chunk
+# STEP 5: LLM Judge
 # ============================
 
 judged_table = judge_claims_table(evidence_table)
 print("Judged claims with LLM")
 
 # ============================
-# STEP 6: Aggregate chunk-level predictions per claim
+# STEP 6: Aggregate
 # ============================
 
 aggregated_table = aggregate_claims(judged_table)
 print("Aggregated predictions for claims")
 
 # ============================
-# STEP 7: Prepare final results.csv
+# STEP 7: Prepare final results
 # ============================
 
-# Map original_id to story_id for output
-# Remove Pathway's internal columns (time, diff) and only keep our data
 final_results = aggregated_table.select(
     story_id=pw.this.original_id,
     prediction=pw.this.prediction,
     rationale=pw.this.rationale
 )
 
-# Save to CSV
 pw.io.csv.write(final_results, RESULTS_FILE)
 
 # Run the computation
-print("\nRunning prediction pipeline...")
+print("\nRunning third retry pipeline for last remaining failed row...")
 
 try:
     pw.run()
     
-    # Fix story IDs - replace Pathway hash IDs with original integer IDs from test.csv
+    # Fix story IDs
     import csv
     
-    # Read test.csv to get original IDs in order
     test_ids = []
     with open(test_file, 'r') as f:
         reader = csv.DictReader(f)
         for row in reader:
             test_ids.append(int(row['id']))
     
-    # Read results.csv
     results_rows = []
     with open(RESULTS_FILE, 'r') as f:
         reader = csv.DictReader(f)
         for row in reader:
             results_rows.append(row)
     
-    # Replace hash IDs with integer IDs
+    if len(results_rows) != len(test_ids):
+        print(f"⚠ Warning: Row count mismatch. Expected {len(test_ids)}, got {len(results_rows)}")
+    
     for i, row in enumerate(results_rows):
         if i < len(test_ids):
             row['story_id'] = str(test_ids[i])
     
-    # Write back corrected results
     with open(RESULTS_FILE, 'w', newline='') as f:
         if results_rows:
-            fieldnames = results_rows[0].keys()
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer = csv.DictWriter(f, fieldnames=results_rows[0].keys())
             writer.writeheader()
             writer.writerows(results_rows)
     
-    print(f"\n✓ Pipeline completed successfully!")
-    print(f"✓ Results saved to {RESULTS_FILE} ({len(results_rows)} predictions)")
-    
+    print(f"\n✓ Third retry pipeline completed!")
+    print(f"✓ Results saved to {RESULTS_FILE} ({len(test_ids)} prediction)")
+
 except Exception as e:
-    print(f"\n❌ Pipeline error: {e}")
-    print(f"Check {RESULTS_FILE} for partial results if available.")
+    print(f"\n✗ Error during computation: {e}")
     raise

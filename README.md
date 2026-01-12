@@ -16,7 +16,7 @@ RAG-based pipeline for detecting inconsistencies in backstory claims using sente
 2. **Configure API keys:**
    ```bash
    cp .env.example .env
-   # Edit .env and add your 3 Gemini API keys
+   # Edit .env and add your 4 Gemini API keys
    ```
 
 3. **Run the pipeline:**
@@ -44,7 +44,7 @@ The pipeline will process 60 test claims and generate `results.csv` with predict
 ## Requirements
 
 - Python 3.10+
-- 3 Gemini API keys (free tier: 15 RPM each = 45 RPM total)
+- Up to 4 Gemini API keys (free tier: 15 RPM each = 60 RPM total)
   - Get free keys at: https://aistudio.google.com/app/apikey
 
 ---
@@ -71,7 +71,7 @@ The pipeline will process 60 test claims and generate `results.csv` with predict
 4. **Configure API keys**
    ```bash
    cp .env.example .env
-   # Edit .env and add your 3 Gemini API keys
+   # Edit .env and add your up to 4 Gemini API keys
    ```
    Get free API keys at: https://aistudio.google.com/app/apikey
 
