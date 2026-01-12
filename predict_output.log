@@ -1,0 +1,18 @@
+/media/vini/Windows/KDSH/myenv/lib/python3.10/site-packages/fs/__init__.py:4: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+  __import__("pkg_resources").declare_namespace(__name__)  # type: ignore
+/media/vini/Windows/KDSH/myenv/lib/python3.10/site-packages/beartype/_util/hint/pep/utilpeptest.py:311: BeartypeDecorHintPep585DeprecationWarning: PEP 484 type hint typing.Iterable[pathway.internals.expression.ColumnReference] deprecated by PEP 585. This hint is scheduled for removal in the first Python version released after October 5th, 2025. To resolve this, import this hint from "beartype.typing" rather than "typing". For further commentary and alternatives, see also:
+    https://beartype.readthedocs.io/en/latest/api_roar/#pep-585-deprecations
+  warn(
+[2026-01-11T01:49:04]:INFO:Preparing Pathway computation
+[2026-01-11T01:49:04]:INFO:Enter read_snapshot method with reader PosixLike
+[2026-01-11T01:49:04]:INFO:Enter read_snapshot method with reader PosixLike
+[2026-01-11T01:49:04]:INFO:FileSystem(data/test.csv): 0 entries (1 minibatch(es)) have been sent to the engine
+[2026-01-11T01:49:04]:INFO:FileSystem(./data/novel): 0 entries (1 minibatch(es)) have been sent to the engine
+[2026-01-11T01:49:04]:INFO:FileSystem(results.csv): Done writing 0 entries, time 1768076344290. Current batch writes took: 0 ms. All writes so far took: 0 ms.
+Building indexes...
+Retrieved evidence for claims
+Judged claims with LLM
+Aggregated predictions for claims
+Batches:   0%|          | 0/1 [00:00<?, ?it/s]Batches: 100%|██████████| 1/1 [00:01<00:00,  1.04s/it]Batches: 100%|██████████| 1/1 [00:01<00:00,  1.04s/it]
+[2026-01-11T01:49:10]:INFO:FileSystem(data/test.csv): 60 entries (4 minibatch(es)) have been sent to the engine
+[2026-01-11T01:49:16]:INFO:FileSystem(data/test.csv): 0 entries (4 minibatch(es)) have been sent to the engine

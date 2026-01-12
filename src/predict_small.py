@@ -1,48 +1,26 @@
-# src/predict.py
+# src/predict_small.py - Test with small dataset
 import os
 import pathway as pw
 from pathlib import Path
 
-# Import your modules
 from chunking import build_chunks
 from index_build import build_index, load_indexes
 from retrieval import retrieve_for_backstory
 from llm_judge import judge_claims_table
 from aggregation import aggregate_claims
 
-# ============================
-# CONFIG
-# ============================
-
 DATA_DIR = "./data"
 INDEX_DIR = "./indexes"
-RESULTS_FILE = "results.csv"
+RESULTS_FILE = "results_small.csv"
+OPENAI_KEY = os.environ.get("OPENAI_API_KEY", "")
 
-OPENAI_KEY = os.environ.get("OPENAI_API_KEY", "")  # optional if needed for embedding
-GEMINI_KEY = "AIzaSyDRJJ2Ho8M1nitZeSj_82G6l5qvRKtL3u0"  # os.environ.get("GEMINI_API_KEY")  # required for llm_judge
-
-MAX_EVIDENCE_CHUNKS = 5  # limit per claim for LLM prompt
-
-# ============================
-# LOAD TEST DATA
-# ============================
-
-test_file = Path(DATA_DIR) / "test.csv"
-if not test_file.exists():
-    raise FileNotFoundError(f"{test_file} not found. Make sure test.csv is in ./data/")
-
+# Load SMALL test data
+test_file = Path(DATA_DIR) / "test_small.csv"
 schema = pw.schema_from_csv(str(test_file))
 test_df = pw.io.csv.read(str(test_file), schema=schema, mode="static")
 
-
-# ============================
-# STEP 1: Chunk novels
-# ============================
-
-
+# Load novels
 novel_dir = "./data/novels"
-
-# Load all novels (each file becomes a row)
 novels_table = pw.io.fs.read(
     path=novel_dir,
     format="plaintext_by_file",
@@ -50,16 +28,12 @@ novels_table = pw.io.fs.read(
     mode="static"
 )
 
-# UDF to extract book_name from metadata
 @pw.udf
 def extract_book_name(metadata: pw.Json) -> str:
-    # metadata is a Pathway Json object, need to convert to dict
     meta_dict = metadata.as_dict()
     file_path = meta_dict.get("path", meta_dict.get("file_path", ""))
-    # Normalize to title case for consistent matching
     return Path(file_path).stem.title()
 
-# Normalize columns for chunking
 novels_table = novels_table.with_columns(
     book_name=extract_book_name(pw.this._metadata),
     full_text=pw.this.data
@@ -68,30 +42,20 @@ novels_table = novels_table.with_columns(
 # Create chunks
 children_table = build_chunks(novels_table)
 
-# ============================
-# STEP 2: Build / Load Index
-# ============================
-
-# Build or load index per book
+# Load/build index
 if not os.path.exists(INDEX_DIR) or not os.listdir(INDEX_DIR):
     print("Building indexes...")
     indexes = build_index(children_table, openai_key=OPENAI_KEY, index_dir=INDEX_DIR)
 else:
-    print("Loading existing embedder and rebuilding index...")
+    print("Loading existing embedder...")
     loaded = load_indexes(INDEX_DIR)
-    # Still need to rebuild the table with the loaded embedder
     embedder = loaded["embedder"]
     embedded_table = children_table.with_columns(
         vector=embedder(pw.this.text)
     )
     indexes = {"embedder": embedder, "table": embedded_table}
 
-# ============================
-# STEP 3: Prepare claims from test.csv
-# ============================
-
-# Test CSV should have: id, book_name, char, caption, content
-# Normalize book_name for case-insensitive matching
+# Prepare claims
 @pw.udf
 def normalize_book_name(name: str) -> str:
     return name.title()
@@ -103,46 +67,44 @@ claims_table = test_df.select(
     character=pw.this.char
 )
 
-# ============================
-# STEP 4: Retrieve evidence chunks for each claim
-# ============================
+print("Processing claims...")
 
+# Retrieve evidence
 evidence_table = retrieve_for_backstory(
     claims_table=claims_table,
     indexes=indexes,
-    top_k=MAX_EVIDENCE_CHUNKS
+    top_k=3  # Reduced for testing
+)
+print("Retrieved evidence")
+
+# Debug: check evidence table
+pw.io.csv.write(
+    evidence_table.select(pw.this.story_id, pw.this.claim),
+    "debug_evidence_output.csv"
 )
 
-print("Retrieved evidence for claims")
-
-# ============================
-# STEP 5: LLM Judge per claim + chunk
-# ============================
-
+# Judge with LLM
 judged_table = judge_claims_table(evidence_table)
-print("Judged claims with LLM")
+print("Judged claims")
 
-# ============================
-# STEP 6: Aggregate chunk-level predictions per claim
-# ============================
+# Debug: check judged table
+pw.io.csv.write(judged_table, "debug_judged.csv")
 
+# Aggregate
 aggregated_table = aggregate_claims(judged_table)
-print("Aggregated predictions for claims")
+print("Aggregated")
 
-# ============================
-# STEP 7: Prepare final results.csv
-# ============================
+# Debug: check what's in aggregated table
+pw.io.csv.write(aggregated_table, "debug_aggregated.csv")
 
+# Final results
 final_results = aggregated_table.select(
     story_id=pw.this.story_id,
     prediction=pw.this.prediction,
     rationale=pw.this.rationale
 )
 
-# Save to CSV - set up the output connector
 pw.io.csv.write(final_results, RESULTS_FILE)
-
-# Run the computation
 pw.run()
 
 print(f"Results saved to {RESULTS_FILE}")
